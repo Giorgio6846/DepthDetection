@@ -22,8 +22,11 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate {
     
     private let photoDepthConverter = DepthToGrayscaleConverter()
     
+    @IBOutlet var ipAddress: UITextField!
+    
     override func viewDidLoad() {
         super.viewDidLoad()
+        self.hideKeyboardWhenTappedAround()
         
         /* setup input and output */
         let videoDevice: AVCaptureDevice? = videoDeviceDiscoverySession.devices.first
@@ -43,7 +46,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate {
             return
         }
         session.addOutput(photoOutput)
-        session.sessionPreset = .photo
+        session.sessionPreset = AVCaptureSession.Preset.vga640x480
         
         session.commitConfiguration()
         
@@ -88,34 +91,41 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate {
         
         processingQueue.async {
             
-            if let depthData = photo.depthData {
-                let depthPixelBuffer = depthData.depthDataMap
-                
-                if !self.photoDepthConverter.isPrepared {
-                    var depthFormatDescription: CMFormatDescription?
-                    CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
-                                                                 imageBuffer: depthPixelBuffer,
-                                                                 formatDescriptionOut: &depthFormatDescription)
-                    
-                    /*
-                     outputRetainedBufferCountHint is the number of pixel buffers we expect to hold on to from the renderer.
-                     This value informs the renderer how to size its buffer pool and how many pixel buffers to preallocate.
-                     Allow 3 frames of latency to cover the dispatch_async call.
-                     */
-                    if let unwrappedDepthFormatDescription = depthFormatDescription {
-                        self.photoDepthConverter.prepare(with: unwrappedDepthFormatDescription, outputRetainedBufferCountHint: 3)
+            if let imageData = photo.fileDataRepresentation() {
+                if let originalImage = UIImage(data: imageData) {
+                    if let depthData = photo.depthData {
+                        let depthPixelBuffer = depthData.depthDataMap
+                        
+                        if !self.photoDepthConverter.isPrepared {
+                            var depthFormatDescription: CMFormatDescription?
+                            CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
+                                                                         imageBuffer: depthPixelBuffer,
+                                                                         formatDescriptionOut: &depthFormatDescription)
+                            
+                            
+                            
+                            /*
+                             outputRetainedBufferCountHint is the number of pixel buffers we expect to hold on to from the renderer.
+                             This value informs the renderer how to size its buffer pool and how many pixel buffers to preallocate.
+                             Allow 3 frames of latency to cover the dispatch_async call.
+                             */
+                            if let unwrappedDepthFormatDescription = depthFormatDescription {
+                                self.photoDepthConverter.prepare(with: unwrappedDepthFormatDescription, outputRetainedBufferCountHint: 3)
+                            }
+                        }
+                        
+                        guard let convertedDepthPixelBuffer = self.photoDepthConverter.render(pixelBuffer: depthPixelBuffer) else {
+                            print("Unable to convert depth pixel buffer")
+                            return
+                        }
+                        
+                        let greyImage = UIImage.init(pixelBuffer: convertedDepthPixelBuffer)
+                        
+                        //UIImageWriteToSavedPhotosAlbum(greyImage!, nil, nil, nil)
+                        
+                        sendDataToServer(depthData: greyImage!, imageData: originalImage, ip: self.ipAddress.text ?? "")
                     }
                 }
-                
-                guard let convertedDepthPixelBuffer = self.photoDepthConverter.render(pixelBuffer: depthPixelBuffer) else {
-                    print("Unable to convert depth pixel buffer")
-                    return
-                }
-                
-                let greyImage = UIImage.init(pixelBuffer: convertedDepthPixelBuffer)
-                
-                UIImageWriteToSavedPhotosAlbum(greyImage!, nil, nil, nil)
-
             }
         }
         
@@ -172,5 +182,17 @@ extension UIImage {
         } else {
             return nil
         }
+    }
+}
+
+extension UIViewController {
+    func hideKeyboardWhenTappedAround() {
+        let tap = UITapGestureRecognizer(target: self, action: #selector(UIViewController.dismissKeyboard))
+        tap.cancelsTouchesInView = false
+        view.addGestureRecognizer(tap)
+    }
+    
+    @objc func dismissKeyboard() {
+        view.endEditing(true)
     }
 }
